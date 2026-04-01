@@ -1,0 +1,29 @@
+{
+  "lower_skin": [
+    5,
+    33,
+    154
+  ],
+  "upper_skin": [
+    46,
+    109,
+    247
+  ],
+  "lower_ycrcb": [
+    0,
+    122,
+    107
+  ],
+  "upper_ycrcb": [
+    255,
+    156,
+    116
+  ],
+  "min_area_ratio": 0.003,
+  "max_area_ratio": 0.35,
+  "min_solidity": 0.4,
+  "max_aspect_ratio": 2.8,
+  "min_extent": 0.15,
+  "required_stable_frames": 1,
+  "face_overlap_threshold": 0.22
+}
