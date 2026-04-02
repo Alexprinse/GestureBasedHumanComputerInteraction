@@ -55,18 +55,27 @@ class InteractionMode(enum.Enum):
 @dataclass
 class DetectionThresholds:
     """Thresholds for hand and gesture detection."""
-    min_detection_confidence: float = 0.7
+    min_detection_confidence: float = 0.5
     min_tracking_confidence: float = 0.5
     
     # Pinch detection: distance between thumb and index finger tip
-    pinch_threshold: float = 0.05
+    pinch_threshold: float = 0.038
     
     # Swipe detection parameters
     swipe_distance_threshold: float = 0.1  # Minimum distance to register a swipe
     swipe_time_threshold: float = 0.5  # Time window for swipe (seconds)
     
     # Finger state detection: threshold for finger "up" position
-    finger_up_threshold: float = 0.02  # Relative to hand bounding box
+    finger_up_threshold: float = 0.025  # Relative to hand bounding box
+
+    # Gesture confidence gate
+    gesture_confidence_threshold: float = 0.58
+
+    # Adaptive scaling (scale-invariant thresholds)
+    adaptive_thresholds: bool = True
+    reference_hand_size: float = 0.25
+    min_hand_scale: float = 0.6
+    max_hand_scale: float = 1.8
     
     # Motion smoothing
     smoothing_alpha: float = 0.7  # Exponential moving average factor
@@ -75,7 +84,7 @@ class DetectionThresholds:
     debounce_delay: float = 0.2  # Seconds before same gesture can repeat
     
     # Frame processing
-    max_num_hands: int = 2
+    max_num_hands: int = 1
     static_image_mode: bool = False
 
 
