@@ -4,6 +4,8 @@ Manages interaction modes, gesture-to-action mapping, and system commands.
 """
 
 import time
+import sys
+import subprocess
 import pyautogui
 from typing import Optional, Callable, Dict
 from enum import Enum
@@ -42,8 +44,8 @@ class InteractionLogic:
         self.target_fps = target_fps
         self.enable_actions = enable_actions
         
-        # Current state
-        self.current_mode = InteractionMode.IDLE
+        # Current state: always-on control mode (no mode switching UX).
+        self.current_mode = InteractionMode.CONTROL
         self.current_gesture = GestureType.UNKNOWN
         self.last_gesture_time = None
         self.mode_start_time = None
@@ -80,6 +82,22 @@ class InteractionLogic:
         # Drag state
         self.is_dragging = False
         self.drag_start_pos = None
+
+        # Cursor smoothing controls (slower, more stable movement).
+        self.cursor_lerp_alpha = 0.22
+        self.cursor_deadzone_px = 4
+
+        # Palm motion state for smooth scrolling and vertical action gating.
+        self.prev_palm_center: Optional[Point] = None
+        self.prev_palm_time: Optional[float] = None
+        self.prev_side_center: Optional[Point] = None
+        self.prev_side_time: Optional[float] = None
+
+        # Pinch-drag state for text selection like click-and-drag.
+        self.pinch_start_tip: Optional[Point] = None
+        self.pinch_start_time: Optional[float] = None
+        self.pinch_drag_threshold: float = 0.012
+
     
     def update(self, gesture: GestureType, hand: HandLandmarks,
               current_time: Optional[float] = None) -> Dict:
@@ -101,6 +119,7 @@ class InteractionLogic:
         self._update_fps(current_time)
         
         # Update current gesture
+        previous_gesture = self.current_gesture
         self.current_gesture = gesture
         self.last_gesture_time = current_time
         
@@ -108,24 +127,16 @@ class InteractionLogic:
         self._update_interaction_mode(gesture, current_time)
         
         # Handle gesture actions based on current mode
-        status = self._handle_gesture_action(gesture, hand, current_time)
+        status = self._handle_gesture_action(gesture, hand, current_time, previous_gesture)
         
         return status
     
     def _update_interaction_mode(self, gesture: GestureType, current_time: float):
-        """Update interaction mode based on gesture."""
-        if gesture == GestureType.OPEN_PALM and self.current_mode == InteractionMode.IDLE:
-            self.current_mode = InteractionMode.CONTROL
-            self.mode_start_time = current_time
-        elif gesture == GestureType.FIST and self.current_mode != InteractionMode.LOCKED:
-            self.current_mode = InteractionMode.LOCKED
-            self.mode_start_time = current_time
-        elif gesture == GestureType.OPEN_PALM and self.current_mode == InteractionMode.LOCKED:
-            self.current_mode = InteractionMode.IDLE
-            self.mode_start_time = current_time
+        """Modes are disabled; keep always-on control."""
+        self.current_mode = InteractionMode.CONTROL
     
     def _handle_gesture_action(self, gesture: GestureType, hand: HandLandmarks,
-                              current_time: float) -> Dict:
+                              current_time: float, previous_gesture: GestureType) -> Dict:
         """Execute action corresponding to gesture."""
         
         action = GESTURE_ACTIONS.get(gesture, "none")
@@ -137,11 +148,90 @@ class InteractionLogic:
             "executed": False,
             "cursor_pos": self.current_cursor_pos,
         }
-        
-        # Only execute in appropriate modes
-        if self.current_mode == InteractionMode.LOCKED:
-            if gesture != GestureType.OPEN_PALM:
+
+        # Handle pinch release first (end drag or click fallback).
+        if previous_gesture == GestureType.PINCH and gesture != GestureType.PINCH:
+            if self.is_dragging:
+                self.end_drag()
+                status["action"] = "drag_end"
+                status["executed"] = True
+            else:
+                if self.enable_actions:
+                    self._handle_click(GestureType.PINCH, hand, current_time)
+                    status["executed"] = True
+                status["action"] = "click"
+            self.pinch_start_tip = None
+            self.pinch_start_time = None
+
+        # Open palm acts as smooth scroll by palm vertical motion.
+        if gesture == GestureType.OPEN_PALM:
+            action = "scroll"
+            status["action"] = action
+            self.prev_side_center = None
+            self.prev_side_time = None
+
+        # Ignore lock/reset actions in always-on mode.
+        if gesture in (GestureType.FIST,):
+            action = "none"
+            status["action"] = action
+            self.prev_side_center = None
+            self.prev_side_time = None
+
+        # Side-horizontal: directional motion control.
+        # - Up/Down: volume up/down
+        # - Left/Right: previous/next tab
+        if gesture == GestureType.SIDE_HORIZONTAL:
+            self.pinch_start_tip = None
+            self.pinch_start_time = None
+            side_action = self._detect_side_horizontal_motion_action(hand, current_time)
+            status["action"] = side_action if side_action else "none"
+            if not self.enable_actions:
+                status["action"] = f"preview:{status['action']}"
                 return status
+            if side_action and side_action in self.action_handlers:
+                try:
+                    self.action_handlers[side_action](gesture, hand, current_time)
+                    status["executed"] = True
+                except Exception as e:
+                    status["error"] = str(e)
+            return status
+
+        # side_vertical disabled for now.
+        if gesture == GestureType.SIDE_VERTICAL:
+            action = "none"
+            status["action"] = action if self.enable_actions else f"preview:{action}"
+            return status
+
+        # Pinch gesture supports click-and-drag selection.
+        if gesture == GestureType.PINCH:
+            self._handle_cursor_move(gesture, hand, current_time)
+            tip = hand.index_finger_tip
+
+            if self.pinch_start_tip is None:
+                self.pinch_start_tip = Point(tip.x, tip.y)
+                self.pinch_start_time = current_time
+                status["action"] = "pinch_hold"
+                return status
+
+            moved = self.pinch_start_tip.distance_2d(Point(tip.x, tip.y))
+            if not self.is_dragging and moved >= self.pinch_drag_threshold:
+                if self.enable_actions:
+                    pyautogui.mouseDown()
+                self.is_dragging = True
+                self.drag_start_pos = tip
+
+            if self.is_dragging:
+                if self.enable_actions:
+                    self._handle_cursor_move(gesture, hand, current_time)
+                status["action"] = "drag"
+                status["executed"] = self.enable_actions
+            else:
+                status["action"] = "pinch_hold"
+            return status
+
+        # Reset side motion history when not in side-horizontal gesture.
+        self.prev_side_center = None
+        self.prev_side_time = None
         
         if not self.enable_actions:
             status["action"] = f"preview:{action}"
@@ -173,8 +263,18 @@ class InteractionLogic:
         screen_x = max(0, min(screen_x, self.screen_width - 1))
         screen_y = max(0, min(screen_y, self.screen_height - 1))
         
-        self.current_cursor_pos = (screen_x, screen_y)
-        pyautogui.moveTo(screen_x, screen_y, duration=0.01)
+        curr_x, curr_y = self.current_cursor_pos
+        if curr_x == 0 and curr_y == 0:
+            new_x, new_y = screen_x, screen_y
+        else:
+            new_x = int((1.0 - self.cursor_lerp_alpha) * curr_x + self.cursor_lerp_alpha * screen_x)
+            new_y = int((1.0 - self.cursor_lerp_alpha) * curr_y + self.cursor_lerp_alpha * screen_y)
+
+        if abs(new_x - curr_x) < self.cursor_deadzone_px and abs(new_y - curr_y) < self.cursor_deadzone_px:
+            return
+
+        self.current_cursor_pos = (new_x, new_y)
+        pyautogui.moveTo(new_x, new_y, duration=0.02)
     
     def _handle_click(self, gesture: GestureType, hand: HandLandmarks,
                      current_time: float):
@@ -184,15 +284,13 @@ class InteractionLogic:
     
     def _handle_reset(self, gesture: GestureType, hand: HandLandmarks,
                      current_time: float):
-        """Reset to idle mode."""
-        self.current_mode = InteractionMode.IDLE
-        self.point_smoother.reset()
+        """No-op in always-on control mode."""
+        return
     
     def _handle_lock(self, gesture: GestureType, hand: HandLandmarks,
                     current_time: float):
-        """Lock interaction."""
-        if self.current_mode != InteractionMode.LOCKED:
-            self.current_mode = InteractionMode.LOCKED
+        """No-op in always-on control mode."""
+        return
     
     def _handle_toggle_playpause(self, gesture: GestureType, hand: HandLandmarks,
                                 current_time: float):
@@ -210,27 +308,76 @@ class InteractionLogic:
                             current_time: float):
         """Navigate to previous tab."""
         if self.debouncer.should_trigger("prev_tab", current_time):
-            pyautogui.hotkey('ctrl', 'shift', 'tab')
+            if sys.platform == "darwin":
+                pyautogui.hotkey('command', 'shift', '[')
+            else:
+                pyautogui.hotkey('ctrl', 'shift', 'tab')
     
     def _handle_next_tab(self, gesture: GestureType, hand: HandLandmarks,
                         current_time: float):
         """Navigate to next tab."""
         if self.debouncer.should_trigger("next_tab", current_time):
-            pyautogui.hotkey('ctrl', 'tab')
+            if sys.platform == "darwin":
+                pyautogui.hotkey('command', 'shift', ']')
+            else:
+                pyautogui.hotkey('ctrl', 'tab')
     
     def _handle_volume_up(self, gesture: GestureType, hand: HandLandmarks,
                          current_time: float):
         """Increase volume."""
         if self.debouncer.should_trigger("vol_up", current_time):
-            # Using keyboard shortcut (depends on OS)
-            # For macOS: brightness up is Option + Shift + F2
-            pyautogui.press('volumeup')
+            self._adjust_system_volume(6)
     
     def _handle_volume_down(self, gesture: GestureType, hand: HandLandmarks,
                            current_time: float):
         """Decrease volume."""
         if self.debouncer.should_trigger("vol_down", current_time):
-            pyautogui.press('volumedown')
+            self._adjust_system_volume(-6)
+
+    def _adjust_system_volume(self, delta: int):
+        """Adjust system output volume with macOS-friendly fallback."""
+        if sys.platform == "darwin":
+            # Clamp output volume to [0, 100].
+            script = (
+                f"set v to output volume of (get volume settings)\n"
+                f"set v to v + ({delta})\n"
+                "if v > 100 then set v to 100\n"
+                "if v < 0 then set v to 0\n"
+                "set volume output volume v"
+            )
+            subprocess.run(["osascript", "-e", script], check=False)
+            return
+
+        pyautogui.press('volumeup' if delta > 0 else 'volumedown')
+
+    def _detect_side_horizontal_motion_action(self, hand: HandLandmarks,
+                                             current_time: float) -> Optional[str]:
+        """Map side-horizontal motion direction to action names."""
+        center = hand.get_center()
+
+        if self.prev_side_center is None or self.prev_side_time is None:
+            self.prev_side_center = center
+            self.prev_side_time = current_time
+            return None
+
+        dx = center.x - self.prev_side_center.x
+        dy = center.y - self.prev_side_center.y
+
+        self.prev_side_center = center
+        self.prev_side_time = current_time
+
+        # Ignore micro movement noise.
+        if abs(dx) < 0.008 and abs(dy) < 0.008:
+            return None
+
+        if abs(dy) > abs(dx) * 1.05:
+            # Camera coordinates: smaller y means moving up.
+            return "volume_up" if dy < 0 else "volume_down"
+
+        if abs(dx) > abs(dy) * 1.05:
+            return "next_tab" if dx > 0 else "previous_tab"
+
+        return None
     
     def _handle_drag(self, gesture: GestureType, hand: HandLandmarks,
                     current_time: float):
@@ -246,16 +393,42 @@ class InteractionLogic:
     
     def _handle_scroll(self, gesture: GestureType, hand: HandLandmarks,
                       current_time: float):
-        """Scroll using palm movement."""
-        # Use palm center for scroll direction
+        """Smooth scroll based on open-palm vertical movement (dy)."""
         palm_center = hand.get_center()
-        
-        # Simple scroll: if palm moves down, scroll down
-        # This would need motion history for proper implementation
-        if palm_center.y > 0.5:
-            pyautogui.scroll(-3)
-        else:
-            pyautogui.scroll(3)
+
+        if self.prev_palm_center is None or self.prev_palm_time is None:
+            self.prev_palm_center = palm_center
+            self.prev_palm_time = current_time
+            return
+
+        dt = max(current_time - self.prev_palm_time, 1e-6)
+        dy = palm_center.y - self.prev_palm_center.y
+        vy = dy / dt
+
+        # Ignore micro-jitter.
+        if abs(dy) < 0.004 and abs(vy) < 0.12:
+            self.prev_palm_center = palm_center
+            self.prev_palm_time = current_time
+            return
+
+        # Convert normalized motion to scroll steps; down hand motion => scroll down.
+        steps = int(max(-18, min(18, -dy * 260)))
+        if steps != 0:
+            pyautogui.scroll(steps)
+
+        self.prev_palm_center = palm_center
+        self.prev_palm_time = current_time
+
+    def _is_sideward_palm(self, hand: HandLandmarks) -> bool:
+        """Detect sideward palm orientation from knuckle span compression."""
+        # When palm turns sideward to camera, knuckle span appears compressed.
+        knuckle_span = hand.landmarks[5].distance_2d(hand.landmarks[17])
+        palm_length = hand.landmarks[0].distance_2d(hand.landmarks[9])
+        if palm_length <= 1e-6:
+            return False
+        ratio = knuckle_span / palm_length
+        return ratio < 1.15
+
     
     def end_drag(self):
         """End drag operation."""
@@ -282,3 +455,7 @@ class InteractionLogic:
         """Clean up resources."""
         self.end_drag()
         self.point_smoother.reset()
+        self.prev_palm_center = None
+        self.prev_palm_time = None
+        self.prev_side_center = None
+        self.prev_side_time = None

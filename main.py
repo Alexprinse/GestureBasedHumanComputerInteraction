@@ -115,8 +115,7 @@ class GestureControlApp:
                     
                     # Debug output
                     if self.debug_mode:
-                        print(f"Hand {hand_id}: Gesture={gesture.value}, "
-                              f"Mode={status['mode']}, Action={status['action']}")
+                        print(f"Hand {hand_id}: Gesture={gesture.value}, Action={status['action']}")
                 
                 # Draw annotations on frame
                 frame = self._draw_annotations(frame, hands)
@@ -153,16 +152,13 @@ class GestureControlApp:
         
         # Draw gesture and mode information
         if self.show_gesture_label:
-            mode = self.interaction_logic.current_mode.value
             gesture = self.interaction_logic.current_gesture.value
             cursor_pos = self.interaction_logic.current_cursor_pos
             
-            # Draw mode and gesture
-            cv2.putText(frame, f"Mode: {mode}", (10, 30),
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-            cv2.putText(frame, f"Gesture: {gesture}", (10, 70),
+            # Draw gesture only (mode system removed for always-on control).
+            cv2.putText(frame, f"Gesture: {gesture}", (10, 40),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
-            cv2.putText(frame, f"Cursor: {cursor_pos}", (10, 110),
+            cv2.putText(frame, f"Cursor: {cursor_pos}", (10, 80),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
         
         # Draw FPS
