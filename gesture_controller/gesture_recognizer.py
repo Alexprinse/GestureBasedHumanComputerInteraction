@@ -194,52 +194,7 @@ class GestureRecognizer:
         return GestureType.UNKNOWN, 0.0
 
     def _detect_side_alignment_gesture(self, hand: HandLandmarks) -> Tuple[GestureType, float]:
-        """Detect side-horizontal only (side-vertical disabled by request)."""
-        # Side-facing hand usually has compressed knuckle span.
-        knuckle_span = hand.landmarks[5].distance_2d(hand.landmarks[17])
-        palm_length = max(hand.landmarks[0].distance_2d(hand.landmarks[9]), 1e-6)
-        side_ratio = knuckle_span / palm_length
-
-        x_min, y_min, x_max, y_max = hand.get_bounding_box()
-        width = max(x_max - x_min, 1e-6)
-        height = max(y_max - y_min, 1e-6)
-        width_height_ratio = width / height
-
-        fingertip_ids = (8, 12, 16, 20)
-        tip_x = [hand.landmarks[i].x for i in fingertip_ids]
-        tip_y = [hand.landmarks[i].y for i in fingertip_ids]
-        tip_x_span = max(tip_x) - min(tip_x)
-        tip_y_span = max(tip_y) - min(tip_y)
-        tip_aspect = min(tip_x_span, tip_y_span) / max(max(tip_x_span, tip_y_span), 1e-6)
-
-        # Strict side requirement to avoid collisions with other gestures.
-        if side_ratio > 0.58:
-            return GestureType.UNKNOWN, 0.0
-
-        # Front-facing open palms produce broad 2D spreads and are rejected here.
-        if 0.80 <= width_height_ratio <= 1.30:
-            return GestureType.UNKNOWN, 0.0
-
-        # Edge-on side profile tends to align fingertips in a line-like pattern.
-        if tip_aspect > 0.52:
-            return GestureType.UNKNOWN, 0.0
-
-        wrist = hand.wrist
-        middle_mcp = hand.landmarks[9]
-        dx = middle_mcp.x - wrist.x
-        dy = middle_mcp.y - wrist.y
-        abs_dx = abs(dx)
-        abs_dy = abs(dy)
-
-        confidence = float(max(0.62, min(0.98, 1.0 - side_ratio)))
-
-        # side_vertical is intentionally disabled. We accept both narrow-tall and
-        # wide-short edge profiles as side-horizontal variants.
-        if (abs_dy > abs_dx * 1.15 and width_height_ratio < 0.72) or (
-            abs_dx > abs_dy * 1.15 and width_height_ratio > 1.45
-        ):
-            return GestureType.SIDE_HORIZONTAL, confidence
-
+        """Side gestures are disabled in favor of fist-motion control."""
         return GestureType.UNKNOWN, 0.0
     
     def _detect_motion_gesture(self, hand_id: int, current_time: float) -> GestureType:

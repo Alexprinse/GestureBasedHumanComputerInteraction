@@ -1,356 +1,246 @@
 # Intelligent Gesture-Based Human-Computer Interaction System
 
-A real-time, vision-based interface that enables users to control a computer using hand gestures captured through a webcam. This project bridges human-computer interaction and robotics by treating gestures as control signals and the computer as an intelligent agent.
+A real-time webcam-based gesture control system built with MediaPipe, OpenCV, and PyAutoGUI. It detects hand landmarks, classifies gestures, and turns them into computer interactions such as cursor movement, click-and-drag selection, media control, scrolling, and app/tab switching.
 
-## 📋 Project Overview
+## Overview
 
-The system leverages computer vision and machine learning techniques to detect, interpret, and map human hand gestures into meaningful system-level commands. It transforms the laptop into an interactive robotic entity, where gestures act as control signals, similar to how robots interpret sensory inputs for decision-making and actuation.
+The current version is optimized for practical laptop use and presentation. It uses an always-on interaction model with smoother cursor motion, calmer gesture triggering, and gesture-specific directional controls.
 
-### Key Features
+## Current Gesture Set
 
-- ✨ **Real-time Hand Tracking**: MediaPipe detects 21 hand landmarks at 30+ FPS
-- 👆 **Gesture Recognition**: Rule-based classification of static and motion gestures
-- 🖱️ **System Control**: Mouse cursor movement, clicks, scrolling, and application control
-- 🎯 **Temporal Smoothing**: Exponential moving average filters reduce jitter
-- 🛡️ **Debouncing**: Prevents false positives and rapid repeated actions
-- 📊 **Interactive Visualization**: Real-time feedback with FPS, gesture labels, and landmarks
+### Core Gestures
 
-## 🏗️ System Architecture
+- `index_finger_up` - move cursor
+- `pinch` - click or drag selection when moved
+- `open_palm` - scroll with palm movement
+- `fist` - directional control for volume and tab switching
+- `two_fingers` - play/pause
+- `three_fingers` - switch application
 
+### Motion Gestures
+
+- `swipe_left` - previous tab
+- `swipe_right` - next tab
+- `swipe_up` - volume up
+- `swipe_down` - volume down
+
+### Disabled or Not Used in Current Flow
+
+- `side_horizontal`
+- `side_vertical`
+
+These are kept in the codebase for compatibility, but the current interaction flow does not rely on them.
+
+## How the Current System Works
+
+1. The webcam captures the frame.
+2. MediaPipe Hand Landmarker extracts 21 hand landmarks.
+3. The gesture recognizer classifies the hand pose.
+4. The interaction layer maps the gesture to a system action.
+5. PyAutoGUI or macOS automation executes the action.
+
+## Functional Behavior
+
+### Cursor and Selection
+
+- `index_finger_up` moves the cursor.
+- `pinch` starts selection behavior.
+- If you pinch and move, it becomes click-and-drag for text selection.
+- Releasing the pinch ends the drag.
+
+### Volume and Tab Control
+
+- `fist` moved up/down controls volume up/down.
+- `fist` moved left/right controls previous/next tab.
+- This replaced the older side-horizontal interaction because it was easier to confuse with open palm.
+
+### App Switching
+
+- `three_fingers` switches applications.
+- On macOS, this uses `Command + Tab`.
+
+### Media Control
+
+- `two_fingers` toggles play/pause.
+
+### Scrolling
+
+- `open_palm` is used for smooth vertical scrolling.
+- Motion is intentionally slowed and stabilized for better presentation.
+
+## Processing Pipeline
+
+```text
+Webcam Frame
+  -> MediaPipe Hand Landmark Detection
+  -> Gesture Recognition
+  -> Temporal Stabilization
+  -> Interaction Logic
+  -> System Action via PyAutoGUI / macOS automation
 ```
-Input Layer
-    ↓
-Webcam → Video Stream
-    ↓
-Perception Layer
-    ↓
-MediaPipe Hand Detection (21 landmarks)
-    ↓
-Feature Extraction Layer
-    ↓
-Finger states, distances, motion vectors
-    ↓
-Gesture Recognition Layer
-    ↓
-Rule-based static & motion gesture classification
-    ↓
-Interaction Logic Layer
-    ↓
-Mode management, gesture-to-command mapping
-    ↓
-Execution Layer
-    ↓
-PyAutoGUI → System commands
-```
 
-## 🎨 Gesture Language
+## Project Structure
 
-### Navigation Gestures
-- **Index Finger Up**: Cursor Movement
-- **Pinch** (Thumb + Index): Click / Drag
-
-### Control Gestures
-- **Open Palm**: Enter Control Mode / Reset
-- **Fist**: Lock / Pause
-- **Two Fingers** (Index + Middle): Play/Pause
-- **Three Fingers** (Index + Middle + Ring): Switch Applications
-
-### Motion-Based Gestures
-- **Swipe Left**: Previous Tab
-- **Swipe Right**: Next Tab
-- **Swipe Up**: Volume Up
-- **Swipe Down**: Volume Down
-
-### Continuous Gestures
-- **Pinch + Move**: Drag
-- **Palm Move**: Scroll
-
-## 📦 Project Structure
-
-```
+```text
 majorProject/
 ├── gesture_controller/
-│   ├── __init__.py                 # Package initialization
-│   ├── config.py                   # Configuration & gesture definitions
-│   ├── utils.py                    # Mathematical utilities & helpers
-│   ├── hand_detector.py            # MediaPipe hand detection
-│   ├── gesture_recognizer.py       # Gesture recognition engine
-│   └── interaction_logic.py        # System interaction & command execution
-├── tests/
-│   └── __init__.py                 # Test package placeholder
-├── main.py                         # Main application entry point
-├── requirements.txt                # Python dependencies
-└── README.md                       # This file
+│   ├── __init__.py
+│   ├── config.py
+│   ├── utils.py
+│   ├── hand_detector.py
+│   ├── gesture_recognizer.py
+│   └── interaction_logic.py
+├── main.py
+├── models/
+│   └── hand_landmarker.task
+└── README.md
 ```
 
-## 🚀 Quick Start
+## Key Modules
 
-### Prerequisites
+### `gesture_controller/hand_detector.py`
 
-- Python 3.8+
-- Webcam
-- macOS, Linux, or Windows
+- Runs MediaPipe hand landmark detection
+- Returns real 21-point hand landmarks
+- Supports visualization of landmarks and connections
 
-### Installation
+### `gesture_controller/gesture_recognizer.py`
 
-1. **Clone or navigate to the project directory**:
-```bash
-cd /Users/shalem/Desktop/majorProject
-```
+- Classifies hand gestures from landmarks
+- Uses finger-state rules and geometric checks
+- Stabilizes output across frames to reduce flicker
+- Keeps side gestures disabled in the current interaction flow
 
-2. **Create a virtual environment** (recommended):
-```bash
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-```
+### `gesture_controller/interaction_logic.py`
 
-3. **Install dependencies**:
-```bash
-pip install -r requirements.txt
-```
+- Maps gestures to actions
+- Handles cursor motion, click, drag, scroll, volume, tabs, and app switching
+- Uses smoothing and debouncing to keep the interaction calm and presentable
+- Supports macOS-friendly shortcuts
 
-### Running the Application
+### `gesture_controller/config.py`
+
+- Defines gesture symbols
+- Defines thresholds and smoothing values
+- Stores the gesture-to-action mapping
+
+### `gesture_controller/utils.py`
+
+- Point and distance helpers
+- Exponential moving average smoothing
+- Motion tracking
+- Debouncing utilities
+
+## Important Symbols
+
+### Gesture Symbols
+
+- `GestureType.INDEX_FINGER_UP`
+- `GestureType.PINCH`
+- `GestureType.OPEN_PALM`
+- `GestureType.FIST`
+- `GestureType.TWO_FINGERS`
+- `GestureType.THREE_FINGERS`
+- `GestureType.SWIPE_LEFT`
+- `GestureType.SWIPE_RIGHT`
+- `GestureType.SWIPE_UP`
+- `GestureType.SWIPE_DOWN`
+- `GestureType.SIDE_HORIZONTAL`
+- `GestureType.SIDE_VERTICAL`
+- `GestureType.UNKNOWN`
+
+### Action Symbols
+
+- `cursor_move`
+- `click`
+- `drag`
+- `scroll`
+- `toggle_playpause`
+- `switch_app`
+- `previous_tab`
+- `next_tab`
+- `volume_up`
+- `volume_down`
+- `none`
+
+## Running the App
 
 ```bash
 python main.py
 ```
 
-**Command-line Options:**
-```bash
-python main.py --help
-python main.py --camera 0 --debug  # Enable debug mode
-python main.py --screen-width 1920 --screen-height 1080  # Set screen dimensions
-```
+Useful options:
 
-### Using the System
-
-1. **Launch the application**: `python main.py`
-2. **Allow camera access** when prompted
-3. **Position your hand** in front of the webcam
-4. **Use gestures** to control your computer:
-   - Open palm to enter control mode
-   - Index finger up for cursor
-   - Pinch to click
-   - Fist to lock interaction
-5. **Exit**: Press 'q' to quit
-6. **Reset**: Press 'r' to reset system state
-7. **Debug**: Press 'd' to toggle debug visualization
-
-## 🔧 Configuration
-
-Edit [gesture_controller/config.py](gesture_controller/config.py) to customize:
-
-- **Detection Thresholds**: Confidence, pinch distance, swipe parameters
-- **Screen Mapping**: Coordinate scaling and offset
-- **Gestures**: Add or modify gesture definitions
-- **Interaction Modes**: Define state transitions
-- **Display Settings**: FPS, landmarks, gesture labels visibility
-
-### Key Configuration Parameters
-
-```python
-# Detection thresholds
-min_detection_confidence: 0.7
-pinch_threshold: 0.05  # Distance between thumb and index
-swipe_distance_threshold: 0.1
-swipe_time_threshold: 0.5 seconds
-
-# Motion smoothing
-smoothing_alpha: 0.7  # EMA factor (higher = smoother but more lag)
-
-# Debouncing
-debounce_delay: 0.2 seconds
-```
-
-## 📊 Modules Overview
-
-### 1. **hand_detector.py**
-- Detects hand landmarks using MediaPipe
-- Extracts 21 keypoints per hand
-- Handles multiple hands simultaneously
-- Provides visualization utilities
-
-### 2. **gesture_recognizer.py**
-- Identifies hand gestures from landmarks
-- Supports static gestures (pinch, fist, palm)
-- Detects motion gestures (swipes)
-- Uses temporal filtering for stability
-
-### 3. **interaction_logic.py**
-- Maps gestures to system actions
-- Manages interaction modes (IDLE, CONTROL, LOCKED)
-- Executes system commands via PyAutoGUI
-- Applies cursor smoothing and debouncing
-
-### 4. **config.py**
-- Centralized configuration management
-- Gesture type enumeration
-- Interaction mode definitions
-- Gesture-to-action mappings
-
-### 5. **utils.py**
-- Point class for coordinate handling
-- Exponential Moving Average filter for smoothing
-- Motion tracker for swipe detection
-- Debouncer for repeated gesture prevention
-- Mathematical utilities (distance, angle calculations)
-
-## 🎯 Core Algorithms
-
-### Hand Landmark Detection
-- 21-point skeletal model using MediaPipe's pre-trained model
-- Real-time detection at webcam resolution
-- Handles multiple hands and different hand poses
-
-### Gesture Recognition
-1. **Static Gesture Detection**:
-   - Finger state analysis (up/down based on joint positions)
-   - Distance measurements (e.g., thumb-index for pinch)
-   - Finger configuration patterns
-
-2. **Motion Gesture Detection**:
-   - Position history tracking
-   - Displacement calculation
-   - Direction determination (left/right/up/down)
-   - Velocity computation
-
-### Smoothing Algorithm
-- **Exponential Moving Average (EMA)**:
-  - Reduces jitter in cursor movement
-  - Configurable smoothing factor (0-1)
-  - Independent X, Y, Z filtering
-
-### Debouncing Mechanism
-- Prevents rapid repeated gestures
-- Configurable time window
-- Per-gesture tracking
-
-## 🧪 Testing & Debugging
-
-### Debug Mode
-Enable debug visualization with the `-d` flag:
 ```bash
 python main.py --debug
+python main.py --test-mode --debug
+python main.py --camera 0
+python main.py --screen-width 1920 --screen-height 1080
 ```
 
-This displays:
-- FPS counter
-- Hand landmarks with connections
-- Landmark indices
-- Current gesture and mode
-- Cursor position
-- Confidence scores
+## Recommended Workflow
 
-### Console Output
-Monitor gesture detection and actions:
-```
-Hand 0: Gesture=index_finger_up, Mode=control, Action=cursor_move
-Hand 0: Gesture=pinch, Mode=control, Action=click
-```
+1. Run `python main.py --test-mode --debug` first.
+2. Check the on-screen gesture label and cursor position.
+3. Test one gesture at a time.
+4. Move to normal mode once the gesture behavior looks correct.
 
-### Performance Monitoring
-- Track FPS in real-time
-- Monitor gesture recognition accuracy
-- Analyze false positive rates
-- Profile interaction latency
+## Tuning Notes
 
-## 📈 Advanced Features (Roadmap)
+The current interaction is intentionally slowed down for smoother presentation.
 
-- [ ] **Multi-Hand Interaction:** One hand for navigation, another for commands
-- [ ] **Context-Aware Control:** Adapt gestures based on active application
-- [ ] **Machine Learning Classifier:** Train custom models for improved accuracy
-- [ ] **Virtual Interaction Zones:** Define regions for special actions
-- [ ] **Gesture Recording:** Record and replay gesture sequences
-- [ ] **Configuration UI:** GUI-based settings management
-- [ ] **Hand Pose Classification:** Recognize complex hand poses
-- [ ] **Gesture Macros:** Create custom multi-step gesture sequences
+Main tuning values are in `gesture_controller/config.py` and `gesture_controller/interaction_logic.py`:
 
-## ⚙️ System Requirements
+- `smoothing_alpha` controls how much hand movement is filtered
+- `debounce_delay` controls how fast repeated actions can fire
+- `cursor_lerp_alpha` controls cursor glide speed
+- `cursor_deadzone_px` reduces small cursor jumps
+- `pinch_drag_threshold` controls how much movement is needed before selection drag starts
 
-### Hardware
-- Modern webcam (720p+ recommended)
-- CPU: Intel i5/Ryzen 5 or better
-- RAM: 4GB minimum, 8GB recommended
-- GPU: Optional (CUDA for faster processing)
+## macOS Notes
 
-### Software
+This project is currently tuned for macOS use.
+
+- App switching uses `Command + Tab`
+- Previous tab uses `Command + Shift + [`
+- Next tab uses `Command + Shift + ]`
+- Volume changes use AppleScript-based output volume control
+
+## Dependencies
+
 - Python 3.8+
 - OpenCV
 - MediaPipe
 - NumPy
 - PyAutoGUI
-- Pillow
 
-## 🐛 Troubleshooting
+## Troubleshooting
 
-### Camera not found
-```bash
-python main.py --camera 1  # Try different camera ID
-```
+### Gesture feels too fast
 
-### Low FPS / Slow performance
-- Reduce input resolution in `main.py`
-- Disable landmark visualization
-- Use GPU acceleration (if available)
-- Close other resource-intensive applications
+- Lower `cursor_lerp_alpha`
+- Increase `debounce_delay`
+- Increase `pinch_drag_threshold`
 
-### Gestures not recognized
-- Adjust detection thresholds in `config.py`
-- Ensure adequate lighting
-- Position hand closer to camera
-- Check MediaPipe confidence score
+### Volume or tab switching does not trigger
 
-### PyAutoGUI errors
-- Ensure mouse/keyboard control is allowed
-- On macOS: Grant accessibility permissions
-- Disable mouse acceleration for smoother movement
+- Make sure you are holding a fist
+- Move clearly up/down or left/right
+- Use `--debug` to watch the detected gesture name
 
-## 📚 References
+### Cursor looks unstable
 
-- [MediaPipe Hands Documentation](https://google.github.io/mediapipe/)
-- [OpenCV Documentation](https://docs.opencv.org/)
-- [PyAutoGUI Documentation](https://pyautogui.readthedocs.io/)
+- Improve lighting
+- Keep your hand in frame
+- Reduce background clutter
 
-## 🤝 Contributing
+### macOS permissions
 
-Contributions are welcome! Areas for improvement:
+- Grant camera access
+- Grant accessibility permissions for keyboard and mouse control
 
-- [ ] Additional gesture types
-- [ ] Performance optimization
-- [ ] Multi-platform testing
-- [ ] ML-based gesture recognition
-- [ ] Unit tests and integration tests
-- [ ] Documentation improvements
-- [ ] Configuration GUI
+## Status
 
-## 📄 License
-
-This project is open source and available for educational and research purposes.
-
-## 🎓 Learning Outcomes
-
-This project demonstrates:
-
-- **Computer Vision**: Hand detection and landmark extraction
-- **Real-time Processing**: Low-latency gesture recognition
-- **State Machines**: Interaction mode management
-- **Signal Processing**: Filtering and smoothing techniques
-- **Human-Computer Interaction**: Gesture-based interfaces
-- **Robotics Principles**: Sensing, decision-making, and actuation
-- **Software Engineering**: Modular design, configuration management, error handling
-
-## 🙏 Acknowledgments
-
-- **MediaPipe**: For the robust hand detection model
-- **OpenCV**: For image processing capabilities
-- **PyAutoGUI**: For system command execution
-
-## 📞 Support
-
-For issues, questions, or suggestions, please create an issue or contact the development team.
-
----
-
-**Version**: 1.0.0  
-**Last Updated**: March 2026  
-**Status**: Active Development
+- Version: 1.0.0
+- Last Updated: April 2026
+- Status: Active Development

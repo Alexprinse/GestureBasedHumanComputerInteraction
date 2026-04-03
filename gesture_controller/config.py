@@ -82,10 +82,10 @@ class DetectionThresholds:
     max_hand_scale: float = 1.8
     
     # Motion smoothing
-    smoothing_alpha: float = 0.7  # Exponential moving average factor
+    smoothing_alpha: float = 0.45  # Exponential moving average factor
     
     # Debouncing
-    debounce_delay: float = 0.2  # Seconds before same gesture can repeat
+    debounce_delay: float = 0.42  # Seconds before same gesture can repeat
     
     # Frame processing
     max_num_hands: int = 1
@@ -116,10 +116,10 @@ GESTURE_ACTIONS: Dict[GestureType, str] = {
     GestureType.INDEX_FINGER_UP: "cursor_move",
     GestureType.PINCH: "click",
     GestureType.OPEN_PALM: "reset",
-    GestureType.FIST: "lock",
+    GestureType.FIST: "fist_motion",
     GestureType.TWO_FINGERS: "toggle_playpause",
     GestureType.THREE_FINGERS: "switch_app",
-    GestureType.SIDE_HORIZONTAL: "side_horizontal_motion",
+    GestureType.SIDE_HORIZONTAL: "none",
     GestureType.SIDE_VERTICAL: "none",
     GestureType.SWIPE_LEFT: "previous_tab",
     GestureType.SWIPE_RIGHT: "next_tab",

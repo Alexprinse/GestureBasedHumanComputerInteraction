@@ -84,19 +84,21 @@ class InteractionLogic:
         self.drag_start_pos = None
 
         # Cursor smoothing controls (slower, more stable movement).
-        self.cursor_lerp_alpha = 0.22
-        self.cursor_deadzone_px = 4
+        self.cursor_lerp_alpha = 0.09
+        self.cursor_deadzone_px = 10
 
         # Palm motion state for smooth scrolling and vertical action gating.
         self.prev_palm_center: Optional[Point] = None
         self.prev_palm_time: Optional[float] = None
         self.prev_side_center: Optional[Point] = None
         self.prev_side_time: Optional[float] = None
+        self.prev_fist_center: Optional[Point] = None
+        self.prev_fist_time: Optional[float] = None
 
         # Pinch-drag state for text selection like click-and-drag.
         self.pinch_start_tip: Optional[Point] = None
         self.pinch_start_time: Optional[float] = None
-        self.pinch_drag_threshold: float = 0.012
+        self.pinch_drag_threshold: float = 0.022
 
     
     def update(self, gesture: GestureType, hand: HandLandmarks,
@@ -170,12 +172,24 @@ class InteractionLogic:
             self.prev_side_center = None
             self.prev_side_time = None
 
-        # Ignore lock/reset actions in always-on mode.
-        if gesture in (GestureType.FIST,):
-            action = "none"
-            status["action"] = action
-            self.prev_side_center = None
-            self.prev_side_time = None
+        # Fist: directional motion control.
+        # - Up/Down: volume up/down
+        # - Left/Right: previous/next tab
+        if gesture == GestureType.FIST:
+            self.pinch_start_tip = None
+            self.pinch_start_time = None
+            fist_action = self._detect_fist_motion_action(hand, current_time)
+            status["action"] = fist_action if fist_action else "none"
+            if not self.enable_actions:
+                status["action"] = f"preview:{status['action']}"
+                return status
+            if fist_action and fist_action in self.action_handlers:
+                try:
+                    self.action_handlers[fist_action](gesture, hand, current_time)
+                    status["executed"] = True
+                except Exception as e:
+                    status["error"] = str(e)
+            return status
 
         # Side-horizontal: directional motion control.
         # - Up/Down: volume up/down
@@ -232,6 +246,8 @@ class InteractionLogic:
         # Reset side motion history when not in side-horizontal gesture.
         self.prev_side_center = None
         self.prev_side_time = None
+        self.prev_fist_center = None
+        self.prev_fist_time = None
         
         if not self.enable_actions:
             status["action"] = f"preview:{action}"
@@ -302,7 +318,10 @@ class InteractionLogic:
                           current_time: float):
         """Switch between applications."""
         if self.debouncer.should_trigger("switch_app", current_time):
-            pyautogui.hotkey('alt', 'tab')
+            if sys.platform == "darwin":
+                pyautogui.hotkey('command', 'tab')
+            else:
+                pyautogui.hotkey('alt', 'tab')
     
     def _handle_previous_tab(self, gesture: GestureType, hand: HandLandmarks,
                             current_time: float):
@@ -367,14 +386,42 @@ class InteractionLogic:
         self.prev_side_time = current_time
 
         # Ignore micro movement noise.
-        if abs(dx) < 0.008 and abs(dy) < 0.008:
+        if abs(dx) < 0.016 and abs(dy) < 0.016:
             return None
 
-        if abs(dy) > abs(dx) * 1.05:
+        if abs(dy) > abs(dx) * 1.22:
             # Camera coordinates: smaller y means moving up.
             return "volume_up" if dy < 0 else "volume_down"
 
-        if abs(dx) > abs(dy) * 1.05:
+        if abs(dx) > abs(dy) * 1.22:
+            return "next_tab" if dx > 0 else "previous_tab"
+
+        return None
+
+    def _detect_fist_motion_action(self, hand: HandLandmarks,
+                                  current_time: float) -> Optional[str]:
+        """Map fist motion direction to action names."""
+        center = hand.get_center()
+
+        if self.prev_fist_center is None or self.prev_fist_time is None:
+            self.prev_fist_center = center
+            self.prev_fist_time = current_time
+            return None
+
+        dx = center.x - self.prev_fist_center.x
+        dy = center.y - self.prev_fist_center.y
+
+        self.prev_fist_center = center
+        self.prev_fist_time = current_time
+
+        # Ignore micro movement noise.
+        if abs(dx) < 0.016 and abs(dy) < 0.016:
+            return None
+
+        if abs(dy) > abs(dx) * 1.22:
+            return "volume_up" if dy < 0 else "volume_down"
+
+        if abs(dx) > abs(dy) * 1.22:
             return "next_tab" if dx > 0 else "previous_tab"
 
         return None
@@ -412,7 +459,7 @@ class InteractionLogic:
             return
 
         # Convert normalized motion to scroll steps; down hand motion => scroll down.
-        steps = int(max(-18, min(18, -dy * 260)))
+        steps = int(max(-9, min(9, -dy * 140)))
         if steps != 0:
             pyautogui.scroll(steps)
 
@@ -459,3 +506,5 @@ class InteractionLogic:
         self.prev_palm_time = None
         self.prev_side_center = None
         self.prev_side_time = None
+        self.prev_fist_center = None
+        self.prev_fist_time = None
