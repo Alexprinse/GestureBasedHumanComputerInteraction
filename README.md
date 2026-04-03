@@ -4,7 +4,7 @@ A real-time webcam-based gesture control system built with MediaPipe, OpenCV, an
 
 ## Overview
 
-The current version is optimized for practical laptop use and presentation. It uses an always-on interaction model with smoother cursor motion, calmer gesture triggering, and gesture-specific directional controls.
+The current version is optimized for practical laptop use and presentation. It uses smooth cursor motion, calmer gesture triggering, and a lock/unlock mode to safely pause actions when needed.
 
 ## Current Gesture Set
 
@@ -12,10 +12,14 @@ The current version is optimized for practical laptop use and presentation. It u
 
 - `index_finger_up` - move cursor
 - `pinch` - click or drag selection when moved
-- `open_palm` - scroll with palm movement
-- `fist` - directional control for volume and tab switching
+- `open_palm` - unlock from lock mode, then scroll with palm movement
+- `fist` - lock mode (stop all actions)
 - `two_fingers` - play/pause
 - `three_fingers` - switch application
+- `thumb_up` - volume up
+- `thumb_down` - volume down
+- `thumb_left` - previous tab
+- `thumb_right` - next tab
 
 ### Motion Gestures
 
@@ -24,12 +28,11 @@ The current version is optimized for practical laptop use and presentation. It u
 - `swipe_up` - volume up
 - `swipe_down` - volume down
 
-### Disabled or Not Used in Current Flow
+### Side Gestures
 
-- `side_horizontal`
-- `side_vertical`
-
-These are kept in the codebase for compatibility, but the current interaction flow does not rely on them.
+- `side_horizontal` - vertical movement controls zoom
+  - move up -> zoom in
+  - move down -> zoom out
 
 ## How the Current System Works
 
@@ -50,10 +53,21 @@ These are kept in the codebase for compatibility, but the current interaction fl
 
 ### Volume and Tab Control
 
-- `fist` uses thumb direction as the control signal.
-- Thumb up/down controls volume up/down.
-- Thumb left/right controls previous/next tab.
-- This replaced side-horizontal interaction because side pose could be confused with open palm.
+- `thumb_up` and `thumb_down` control volume.
+- `thumb_left` and `thumb_right` control tab switching.
+- Tab switching has a cooldown to prevent rapid hopping.
+
+### Lock/Unlock Mode
+
+- `fist` enters `LOCKED` mode and stops all interaction actions.
+- While locked, gestures are detected but actions are blocked.
+- `open_palm` unlocks and returns to control mode.
+
+### Zoom Control
+
+- `side_horizontal` + move up -> zoom in
+- `side_horizontal` + move down -> zoom out
+- Zoom actions include cooldown to avoid repeated zoom bursts.
 
 ### App Switching
 
@@ -110,7 +124,8 @@ majorProject/
 - Classifies hand gestures from landmarks
 - Uses finger-state rules and geometric checks
 - Stabilizes output across frames to reduce flicker
-- Keeps side gestures disabled in the current interaction flow
+- Detects thumb direction gestures (`thumb_up/down/left/right`)
+- Detects `side_horizontal` for zoom movement control
 
 ### `gesture_controller/interaction_logic.py`
 
@@ -142,6 +157,10 @@ majorProject/
 - `GestureType.FIST`
 - `GestureType.TWO_FINGERS`
 - `GestureType.THREE_FINGERS`
+- `GestureType.THUMB_UP`
+- `GestureType.THUMB_DOWN`
+- `GestureType.THUMB_LEFT`
+- `GestureType.THUMB_RIGHT`
 - `GestureType.SWIPE_LEFT`
 - `GestureType.SWIPE_RIGHT`
 - `GestureType.SWIPE_UP`
@@ -158,6 +177,8 @@ majorProject/
 - `scroll`
 - `toggle_playpause`
 - `switch_app`
+- `zoom_in`
+- `zoom_out`
 - `previous_tab`
 - `next_tab`
 - `volume_up`
@@ -225,9 +246,15 @@ This project is currently tuned for macOS use.
 
 ### Volume or tab switching does not trigger
 
-- Make sure you are holding a fist
-- Point the thumb clearly in one direction (up, down, left, or right)
+- Make sure `fist` is not active (fist locks the system)
+- Point the thumb clearly in one direction (`thumb_up/down/left/right`)
 - Use `--debug` to watch the detected gesture name
+
+### Side zoom does not trigger
+
+- Show a clear side-horizontal hand pose
+- Move clearly up or down (not sideways)
+- Use `--debug` and verify `side_horizontal` appears before movement
 
 ### Cursor looks unstable
 
