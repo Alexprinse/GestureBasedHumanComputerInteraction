@@ -44,7 +44,7 @@ class InteractionLogic:
         self.target_fps = target_fps
         self.enable_actions = enable_actions
         
-        # Current state: always-on control mode (no mode switching UX).
+        # Current mode state.
         self.current_mode = InteractionMode.CONTROL
         self.current_gesture = GestureType.UNKNOWN
         self.last_gesture_time = None
@@ -72,6 +72,8 @@ class InteractionLogic:
             "switch_app": self._handle_switch_app,
             "previous_tab": self._handle_previous_tab,
             "next_tab": self._handle_next_tab,
+            "zoom_in": self._handle_zoom_in,
+            "zoom_out": self._handle_zoom_out,
             "volume_up": self._handle_volume_up,
             "volume_down": self._handle_volume_down,
             "drag": self._handle_drag,
@@ -92,13 +94,23 @@ class InteractionLogic:
         self.prev_palm_time: Optional[float] = None
         self.prev_side_center: Optional[Point] = None
         self.prev_side_time: Optional[float] = None
-        self.prev_fist_center: Optional[Point] = None
-        self.prev_fist_time: Optional[float] = None
 
         # Pinch-drag state for text selection like click-and-drag.
         self.pinch_start_tip: Optional[Point] = None
         self.pinch_start_time: Optional[float] = None
         self.pinch_drag_threshold: float = 0.022
+
+        # Hold after any tab switch to avoid rapid tab hopping.
+        self.tab_switch_cooldown_seconds: float = 1.1
+        self.tab_switch_cooldown_until: float = 0.0
+
+        # Hold after play/pause toggle (two-fingers) to avoid fast retriggering.
+        self.playpause_cooldown_seconds: float = 1.0
+        self.playpause_cooldown_until: float = 0.0
+
+        # Hold after side-horizontal zoom action.
+        self.side_zoom_cooldown_seconds: float = 0.85
+        self.side_zoom_cooldown_until: float = 0.0
 
     
     def update(self, gesture: GestureType, hand: HandLandmarks,
@@ -134,8 +146,13 @@ class InteractionLogic:
         return status
     
     def _update_interaction_mode(self, gesture: GestureType, current_time: float):
-        """Modes are disabled; keep always-on control."""
-        self.current_mode = InteractionMode.CONTROL
+        """Update mode: fist locks controls, open palm unlocks."""
+        if gesture == GestureType.FIST:
+            self.current_mode = InteractionMode.LOCKED
+            return
+
+        if self.current_mode == InteractionMode.LOCKED and gesture == GestureType.OPEN_PALM:
+            self.current_mode = InteractionMode.CONTROL
     
     def _handle_gesture_action(self, gesture: GestureType, hand: HandLandmarks,
                               current_time: float, previous_gesture: GestureType) -> Dict:
@@ -150,6 +167,17 @@ class InteractionLogic:
             "executed": False,
             "cursor_pos": self.current_cursor_pos,
         }
+
+        # In locked mode, stop all implementations/actions.
+        if self.current_mode == InteractionMode.LOCKED:
+            status["action"] = "lock"
+            self.prev_side_center = None
+            self.prev_side_time = None
+            self.pinch_start_tip = None
+            self.pinch_start_time = None
+            if self.is_dragging:
+                self.end_drag()
+            return status
 
         # Handle pinch release first (end drag or click fallback).
         if previous_gesture == GestureType.PINCH and gesture != GestureType.PINCH:
@@ -172,32 +200,17 @@ class InteractionLogic:
             self.prev_side_center = None
             self.prev_side_time = None
 
-        # Fist: directional motion control.
-        # - Up/Down: volume up/down
-        # - Left/Right: previous/next tab
-        if gesture == GestureType.FIST:
-            self.pinch_start_tip = None
-            self.pinch_start_time = None
-            fist_action = self._detect_fist_motion_action(hand, current_time)
-            status["action"] = fist_action if fist_action else "none"
-            if not self.enable_actions:
-                status["action"] = f"preview:{status['action']}"
-                return status
-            if fist_action and fist_action in self.action_handlers:
-                try:
-                    self.action_handlers[fist_action](gesture, hand, current_time)
-                    status["executed"] = True
-                except Exception as e:
-                    status["error"] = str(e)
-            return status
-
-        # Side-horizontal: directional motion control.
-        # - Up/Down: volume up/down
-        # - Left/Right: previous/next tab
+        # Side-horizontal: vertical motion controls zoom.
+        # - Up: zoom in
+        # - Down: zoom out
         if gesture == GestureType.SIDE_HORIZONTAL:
             self.pinch_start_tip = None
             self.pinch_start_time = None
-            side_action = self._detect_side_horizontal_motion_action(hand, current_time)
+            side_action = self._detect_side_horizontal_zoom_action(hand, current_time)
+
+            if side_action in ("zoom_in", "zoom_out") and current_time < self.side_zoom_cooldown_until:
+                side_action = None
+
             status["action"] = side_action if side_action else "none"
             if not self.enable_actions:
                 status["action"] = f"preview:{status['action']}"
@@ -206,6 +219,8 @@ class InteractionLogic:
                 try:
                     self.action_handlers[side_action](gesture, hand, current_time)
                     status["executed"] = True
+                    if side_action in ("zoom_in", "zoom_out"):
+                        self.side_zoom_cooldown_until = current_time + self.side_zoom_cooldown_seconds
                 except Exception as e:
                     status["error"] = str(e)
             return status
@@ -246,8 +261,6 @@ class InteractionLogic:
         # Reset side motion history when not in side-horizontal gesture.
         self.prev_side_center = None
         self.prev_side_time = None
-        self.prev_fist_center = None
-        self.prev_fist_time = None
         
         if not self.enable_actions:
             status["action"] = f"preview:{action}"
@@ -311,8 +324,12 @@ class InteractionLogic:
     def _handle_toggle_playpause(self, gesture: GestureType, hand: HandLandmarks,
                                 current_time: float):
         """Toggle play/pause."""
+        if current_time < self.playpause_cooldown_until:
+            return
+
         if self.debouncer.should_trigger("playpause", current_time):
             pyautogui.press('space')
+            self.playpause_cooldown_until = current_time + self.playpause_cooldown_seconds
     
     def _handle_switch_app(self, gesture: GestureType, hand: HandLandmarks,
                           current_time: float):
@@ -326,20 +343,28 @@ class InteractionLogic:
     def _handle_previous_tab(self, gesture: GestureType, hand: HandLandmarks,
                             current_time: float):
         """Navigate to previous tab."""
+        if current_time < self.tab_switch_cooldown_until:
+            return
+
         if self.debouncer.should_trigger("prev_tab", current_time):
             if sys.platform == "darwin":
                 pyautogui.hotkey('command', 'shift', '[')
             else:
                 pyautogui.hotkey('ctrl', 'shift', 'tab')
+            self.tab_switch_cooldown_until = current_time + self.tab_switch_cooldown_seconds
     
     def _handle_next_tab(self, gesture: GestureType, hand: HandLandmarks,
                         current_time: float):
         """Navigate to next tab."""
+        if current_time < self.tab_switch_cooldown_until:
+            return
+
         if self.debouncer.should_trigger("next_tab", current_time):
             if sys.platform == "darwin":
                 pyautogui.hotkey('command', 'shift', ']')
             else:
                 pyautogui.hotkey('ctrl', 'tab')
+            self.tab_switch_cooldown_until = current_time + self.tab_switch_cooldown_seconds
     
     def _handle_volume_up(self, gesture: GestureType, hand: HandLandmarks,
                          current_time: float):
@@ -352,6 +377,24 @@ class InteractionLogic:
         """Decrease volume."""
         if self.debouncer.should_trigger("vol_down", current_time):
             self._adjust_system_volume(-6)
+
+    def _handle_zoom_in(self, gesture: GestureType, hand: HandLandmarks,
+                       current_time: float):
+        """Zoom in (app-level)."""
+        if self.debouncer.should_trigger("zoom_in", current_time):
+            if sys.platform == "darwin":
+                pyautogui.hotkey('command', '+')
+            else:
+                pyautogui.hotkey('ctrl', '+')
+
+    def _handle_zoom_out(self, gesture: GestureType, hand: HandLandmarks,
+                        current_time: float):
+        """Zoom out (app-level)."""
+        if self.debouncer.should_trigger("zoom_out", current_time):
+            if sys.platform == "darwin":
+                pyautogui.hotkey('command', '-')
+            else:
+                pyautogui.hotkey('ctrl', '-')
 
     def _adjust_system_volume(self, delta: int):
         """Adjust system output volume with macOS-friendly fallback."""
@@ -369,9 +412,9 @@ class InteractionLogic:
 
         pyautogui.press('volumeup' if delta > 0 else 'volumedown')
 
-    def _detect_side_horizontal_motion_action(self, hand: HandLandmarks,
-                                             current_time: float) -> Optional[str]:
-        """Map side-horizontal motion direction to action names."""
+    def _detect_side_horizontal_zoom_action(self, hand: HandLandmarks,
+                                           current_time: float) -> Optional[str]:
+        """Map side-horizontal vertical movement to zoom action names."""
         center = hand.get_center()
 
         if self.prev_side_center is None or self.prev_side_time is None:
@@ -386,46 +429,14 @@ class InteractionLogic:
         self.prev_side_time = current_time
 
         # Ignore micro movement noise.
-        if abs(dx) < 0.016 and abs(dy) < 0.016:
+        if abs(dx) < 0.014 and abs(dy) < 0.014:
             return None
 
-        if abs(dy) > abs(dx) * 1.22:
-            # Camera coordinates: smaller y means moving up.
-            return "volume_up" if dy < 0 else "volume_down"
-
-        if abs(dx) > abs(dy) * 1.22:
-            return "next_tab" if dx > 0 else "previous_tab"
+        if abs(dy) > abs(dx) * 1.15:
+            return "zoom_in" if dy < 0 else "zoom_out"
 
         return None
 
-    def _detect_fist_motion_action(self, hand: HandLandmarks,
-                                  current_time: float) -> Optional[str]:
-        """Map fist motion direction to action names."""
-        center = hand.get_center()
-
-        if self.prev_fist_center is None or self.prev_fist_time is None:
-            self.prev_fist_center = center
-            self.prev_fist_time = current_time
-            return None
-
-        dx = center.x - self.prev_fist_center.x
-        dy = center.y - self.prev_fist_center.y
-
-        self.prev_fist_center = center
-        self.prev_fist_time = current_time
-
-        # Ignore micro movement noise.
-        if abs(dx) < 0.016 and abs(dy) < 0.016:
-            return None
-
-        if abs(dy) > abs(dx) * 1.22:
-            return "volume_up" if dy < 0 else "volume_down"
-
-        if abs(dx) > abs(dy) * 1.22:
-            return "next_tab" if dx > 0 else "previous_tab"
-
-        return None
-    
     def _handle_drag(self, gesture: GestureType, hand: HandLandmarks,
                     current_time: float):
         """Drag using pinch gesture."""
@@ -506,5 +517,3 @@ class InteractionLogic:
         self.prev_palm_time = None
         self.prev_side_center = None
         self.prev_side_time = None
-        self.prev_fist_center = None
-        self.prev_fist_time = None

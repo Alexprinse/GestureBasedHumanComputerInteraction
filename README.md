@@ -50,9 +50,10 @@ These are kept in the codebase for compatibility, but the current interaction fl
 
 ### Volume and Tab Control
 
-- `fist` moved up/down controls volume up/down.
-- `fist` moved left/right controls previous/next tab.
-- This replaced the older side-horizontal interaction because it was easier to confuse with open palm.
+- `fist` uses thumb direction as the control signal.
+- Thumb up/down controls volume up/down.
+- Thumb left/right controls previous/next tab.
+- This replaced side-horizontal interaction because side pose could be confused with open palm.
 
 ### App Switching
 
@@ -225,7 +226,7 @@ This project is currently tuned for macOS use.
 ### Volume or tab switching does not trigger
 
 - Make sure you are holding a fist
-- Move clearly up/down or left/right
+- Point the thumb clearly in one direction (up, down, left, or right)
 - Use `--debug` to watch the detected gesture name
 
 ### Cursor looks unstable

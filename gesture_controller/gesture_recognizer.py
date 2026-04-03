@@ -137,6 +137,11 @@ class GestureRecognizer:
         )
         if exact_index_only:
             return GestureType.INDEX_FINGER_UP, 0.86
+
+        # Detect thumb-direction gestures (thumb only, others folded).
+        thumb_dir_gesture, thumb_dir_conf = self._detect_thumb_direction_gesture(hand, state)
+        if thumb_dir_gesture != GestureType.UNKNOWN:
+            return thumb_dir_gesture, thumb_dir_conf
         
         # Check fist (all fingers closed)
         fist_closed = 5 - fingers_up_count
@@ -194,7 +199,71 @@ class GestureRecognizer:
         return GestureType.UNKNOWN, 0.0
 
     def _detect_side_alignment_gesture(self, hand: HandLandmarks) -> Tuple[GestureType, float]:
-        """Side gestures are disabled in favor of fist-motion control."""
+        """Detect side-horizontal gesture from open-palm side alignment."""
+        knuckle_span = hand.landmarks[5].distance_2d(hand.landmarks[17])
+        palm_length = max(hand.landmarks[0].distance_2d(hand.landmarks[9]), 1e-6)
+        side_ratio = knuckle_span / palm_length
+
+        x_min, y_min, x_max, y_max = hand.get_bounding_box()
+        width = max(x_max - x_min, 1e-6)
+        height = max(y_max - y_min, 1e-6)
+        width_height_ratio = width / height
+
+        fingertip_ids = (8, 12, 16, 20)
+        tip_x = [hand.landmarks[i].x for i in fingertip_ids]
+        tip_y = [hand.landmarks[i].y for i in fingertip_ids]
+        tip_x_span = max(tip_x) - min(tip_x)
+        tip_y_span = max(tip_y) - min(tip_y)
+        tip_aspect = min(tip_x_span, tip_y_span) / max(max(tip_x_span, tip_y_span), 1e-6)
+
+        # Strong edge-on constraints to avoid open-palm confusion.
+        if side_ratio > 0.58:
+            return GestureType.UNKNOWN, 0.0
+        if 0.80 <= width_height_ratio <= 1.30:
+            return GestureType.UNKNOWN, 0.0
+        if tip_aspect > 0.55:
+            return GestureType.UNKNOWN, 0.0
+
+        wrist = hand.wrist
+        middle_mcp = hand.landmarks[9]
+        dx = middle_mcp.x - wrist.x
+        dy = middle_mcp.y - wrist.y
+        abs_dx = abs(dx)
+        abs_dy = abs(dy)
+
+        # Require a dominant axis for stable side pose.
+        if not (abs_dy > abs_dx * 1.15 or abs_dx > abs_dy * 1.15):
+            return GestureType.UNKNOWN, 0.0
+
+        confidence = float(max(0.62, min(0.96, 1.0 - side_ratio)))
+        return GestureType.SIDE_HORIZONTAL, confidence
+        return GestureType.UNKNOWN, 0.0
+
+    def _detect_thumb_direction_gesture(self, hand: HandLandmarks, state: dict) -> Tuple[GestureType, float]:
+        """Classify thumb-only poses into up/down/left/right directions."""
+        non_thumb_all_down = not state["index"] and not state["middle"] and not state["ring"] and not state["pinky"]
+        if not (state["thumb"] and non_thumb_all_down):
+            return GestureType.UNKNOWN, 0.0
+
+        thumb_tip = hand.landmarks[4]
+        thumb_mcp = hand.landmarks[2]
+        dx = thumb_tip.x - thumb_mcp.x
+        dy = thumb_tip.y - thumb_mcp.y
+
+        magnitude = (dx * dx + dy * dy) ** 0.5
+        if magnitude < 0.045:
+            return GestureType.UNKNOWN, 0.0
+
+        abs_dx = abs(dx)
+        abs_dy = abs(dy)
+        confidence = max(0.64, min(0.96, magnitude * 9.0))
+
+        if abs_dy > abs_dx * 1.15:
+            return (GestureType.THUMB_UP, confidence) if dy < 0 else (GestureType.THUMB_DOWN, confidence)
+
+        if abs_dx > abs_dy * 1.15:
+            return (GestureType.THUMB_RIGHT, confidence) if dx > 0 else (GestureType.THUMB_LEFT, confidence)
+
         return GestureType.UNKNOWN, 0.0
     
     def _detect_motion_gesture(self, hand_id: int, current_time: float) -> GestureType:

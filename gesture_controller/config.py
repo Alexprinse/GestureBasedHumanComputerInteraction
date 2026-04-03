@@ -23,6 +23,10 @@ class GestureType(enum.Enum):
     FIST = "fist"
     TWO_FINGERS = "two_fingers"
     THREE_FINGERS = "three_fingers"
+    THUMB_UP = "thumb_up"
+    THUMB_DOWN = "thumb_down"
+    THUMB_LEFT = "thumb_left"
+    THUMB_RIGHT = "thumb_right"
 
     # Side-alignment orientation gestures (detection-first)
     SIDE_HORIZONTAL = "side_horizontal"
@@ -119,6 +123,10 @@ GESTURE_ACTIONS: Dict[GestureType, str] = {
     GestureType.FIST: "fist_motion",
     GestureType.TWO_FINGERS: "toggle_playpause",
     GestureType.THREE_FINGERS: "switch_app",
+    GestureType.THUMB_UP: "volume_up",
+    GestureType.THUMB_DOWN: "volume_down",
+    GestureType.THUMB_LEFT: "previous_tab",
+    GestureType.THUMB_RIGHT: "next_tab",
     GestureType.SIDE_HORIZONTAL: "none",
     GestureType.SIDE_VERTICAL: "none",
     GestureType.SWIPE_LEFT: "previous_tab",
