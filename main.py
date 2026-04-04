@@ -52,9 +52,9 @@ class GestureControlApp:
         
         # Video capture
         self.cap = cv2.VideoCapture(camera_id)
-        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
-        self.cap.set(cv2.CAP_PROP_FPS, 30)
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, 960)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 540)
+        self.cap.set(cv2.CAP_PROP_FPS, 60)
         
         # Display settings
         self.show_fps = DEFAULT_SYSTEM_CONFIG.show_fps
@@ -66,6 +66,7 @@ class GestureControlApp:
         self.frame_count = 0
         self.gesture_counts = {}
         self.start_time = time.time()
+        self.latest_gesture_details = {}
     
     def run(self):
         """Main application loop."""
@@ -106,6 +107,9 @@ class GestureControlApp:
                     
                     # Update interaction logic
                     status = self.interaction_logic.update(gesture, hand, frame_time)
+
+                    # Keep latest recognizer diagnostics for overlay/debugging.
+                    self.latest_gesture_details = details
                     
                     # Track gestures for statistics
                     if gesture != GestureType.UNKNOWN:
@@ -119,6 +123,9 @@ class GestureControlApp:
                 
                 # Draw annotations on frame
                 frame = self._draw_annotations(frame, hands)
+
+                if not hands:
+                    self.latest_gesture_details = {}
                 
                 # Display frame
                 cv2.imshow("Gesture Control System", frame)
@@ -160,6 +167,73 @@ class GestureControlApp:
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             cv2.putText(frame, f"Cursor: {cursor_pos}", (10, 80),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 0), 1)
+
+            # Model-assist debug overlay for faster tuning.
+            details = self.latest_gesture_details or {}
+            model_used = bool(details.get("model_assist_used", False))
+            model_gesture = details.get("model_assist_gesture", "unknown")
+            model_conf = float(details.get("model_assist_confidence", 0.0))
+            raw_gesture = details.get("raw_gesture", "unknown")
+
+            used_text = "yes" if model_used else "no"
+            overlay_color = (0, 220, 0) if model_used else (180, 180, 180)
+            cv2.putText(
+                frame,
+                f"Model used: {used_text}",
+                (10, 110),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                overlay_color,
+                1,
+            )
+            cv2.putText(
+                frame,
+                f"Model guess: {model_gesture} ({model_conf:.2f})",
+                (10, 132),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (180, 220, 255),
+                1,
+            )
+            cv2.putText(
+                frame,
+                f"Rule raw: {raw_gesture}",
+                (10, 154),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.5,
+                (220, 220, 120),
+                1,
+            )
+
+            class_stats = details.get("model_class_stats", {})
+            if isinstance(class_stats, dict) and class_stats:
+                y = 176
+                cv2.putText(
+                    frame,
+                    "Model samples:",
+                    (10, y),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.45,
+                    (255, 255, 255),
+                    1,
+                )
+                y += 18
+                for label in sorted(class_stats.keys()):
+                    entry = class_stats.get(label, {})
+                    count = int(entry.get("count", 0))
+                    ready = bool(entry.get("ready", False))
+                    marker = "OK" if ready else ".."
+                    color = (0, 220, 0) if ready else (130, 130, 130)
+                    cv2.putText(
+                        frame,
+                        f"{marker} {label}: {count}",
+                        (10, y),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.43,
+                        color,
+                        1,
+                    )
+                    y += 16
         
         # Draw FPS
         if self.show_fps:

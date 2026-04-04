@@ -86,8 +86,11 @@ class InteractionLogic:
         self.drag_start_pos = None
 
         # Cursor smoothing controls (slower, more stable movement).
-        self.cursor_lerp_alpha = 0.09
-        self.cursor_deadzone_px = 10
+        self.cursor_lerp_alpha = 0.18
+        self.cursor_deadzone_px = 4
+
+        # Fractional scroll carry-over for smoother palm scrolling.
+        self.scroll_accumulator: float = 0.0
 
         # Palm motion state for smooth scrolling and vertical action gating.
         self.prev_palm_center: Optional[Point] = None
@@ -101,8 +104,16 @@ class InteractionLogic:
         self.pinch_drag_threshold: float = 0.022
 
         # Hold after any tab switch to avoid rapid tab hopping.
-        self.tab_switch_cooldown_seconds: float = 1.1
+        self.tab_switch_cooldown_seconds: float = 0.35
         self.tab_switch_cooldown_until: float = 0.0
+
+        # Separate cooldown for three-finger app switching.
+        self.switch_app_cooldown_seconds: float = 0.45
+        self.switch_app_cooldown_until: float = 0.0
+
+        # Fast click gating for pinch release click.
+        self.click_cooldown_seconds: float = 0.18
+        self.click_cooldown_until: float = 0.0
 
         # Hold after play/pause toggle (two-fingers) to avoid fast retriggering.
         self.playpause_cooldown_seconds: float = 1.0
@@ -303,13 +314,15 @@ class InteractionLogic:
             return
 
         self.current_cursor_pos = (new_x, new_y)
-        pyautogui.moveTo(new_x, new_y, duration=0.02)
+        pyautogui.moveTo(new_x, new_y, duration=0)
     
     def _handle_click(self, gesture: GestureType, hand: HandLandmarks,
                      current_time: float):
         """Execute mouse click."""
-        if self.debouncer.should_trigger("click", current_time):
-            pyautogui.click()
+        if current_time < self.click_cooldown_until:
+            return
+        pyautogui.click()
+        self.click_cooldown_until = current_time + self.click_cooldown_seconds
     
     def _handle_reset(self, gesture: GestureType, hand: HandLandmarks,
                      current_time: float):
@@ -334,11 +347,15 @@ class InteractionLogic:
     def _handle_switch_app(self, gesture: GestureType, hand: HandLandmarks,
                           current_time: float):
         """Switch between applications."""
-        if self.debouncer.should_trigger("switch_app", current_time):
-            if sys.platform == "darwin":
-                pyautogui.hotkey('command', 'tab')
-            else:
-                pyautogui.hotkey('alt', 'tab')
+        if current_time < self.switch_app_cooldown_until:
+            return
+
+        if sys.platform == "darwin":
+            pyautogui.hotkey('command', 'tab')
+        else:
+            pyautogui.hotkey('alt', 'tab')
+
+        self.switch_app_cooldown_until = current_time + self.switch_app_cooldown_seconds
     
     def _handle_previous_tab(self, gesture: GestureType, hand: HandLandmarks,
                             current_time: float):
@@ -346,12 +363,11 @@ class InteractionLogic:
         if current_time < self.tab_switch_cooldown_until:
             return
 
-        if self.debouncer.should_trigger("prev_tab", current_time):
-            if sys.platform == "darwin":
-                pyautogui.hotkey('command', 'shift', '[')
-            else:
-                pyautogui.hotkey('ctrl', 'shift', 'tab')
-            self.tab_switch_cooldown_until = current_time + self.tab_switch_cooldown_seconds
+        if sys.platform == "darwin":
+            pyautogui.hotkey('command', 'shift', '[')
+        else:
+            pyautogui.hotkey('ctrl', 'shift', 'tab')
+        self.tab_switch_cooldown_until = current_time + self.tab_switch_cooldown_seconds
     
     def _handle_next_tab(self, gesture: GestureType, hand: HandLandmarks,
                         current_time: float):
@@ -359,12 +375,11 @@ class InteractionLogic:
         if current_time < self.tab_switch_cooldown_until:
             return
 
-        if self.debouncer.should_trigger("next_tab", current_time):
-            if sys.platform == "darwin":
-                pyautogui.hotkey('command', 'shift', ']')
-            else:
-                pyautogui.hotkey('ctrl', 'tab')
-            self.tab_switch_cooldown_until = current_time + self.tab_switch_cooldown_seconds
+        if sys.platform == "darwin":
+            pyautogui.hotkey('command', 'shift', ']')
+        else:
+            pyautogui.hotkey('ctrl', 'tab')
+        self.tab_switch_cooldown_until = current_time + self.tab_switch_cooldown_seconds
     
     def _handle_volume_up(self, gesture: GestureType, hand: HandLandmarks,
                          current_time: float):
@@ -465,14 +480,17 @@ class InteractionLogic:
 
         # Ignore micro-jitter.
         if abs(dy) < 0.004 and abs(vy) < 0.12:
+            self.scroll_accumulator *= 0.85
             self.prev_palm_center = palm_center
             self.prev_palm_time = current_time
             return
 
-        # Convert normalized motion to scroll steps; down hand motion => scroll down.
-        steps = int(max(-9, min(9, -dy * 140)))
+        # Convert normalized motion to fractional scroll and emit integral steps.
+        self.scroll_accumulator += -dy * 180
+        steps = int(max(-9, min(9, self.scroll_accumulator)))
         if steps != 0:
             pyautogui.scroll(steps)
+            self.scroll_accumulator -= steps
 
         self.prev_palm_center = palm_center
         self.prev_palm_time = current_time
@@ -513,6 +531,7 @@ class InteractionLogic:
         """Clean up resources."""
         self.end_drag()
         self.point_smoother.reset()
+        self.scroll_accumulator = 0.0
         self.prev_palm_center = None
         self.prev_palm_time = None
         self.prev_side_center = None

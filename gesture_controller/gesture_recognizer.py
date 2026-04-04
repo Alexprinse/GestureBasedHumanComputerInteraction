@@ -6,10 +6,12 @@ Recognizes gestures from hand landmarks using rule-based classification.
 import time
 from typing import Optional, Tuple
 from collections import Counter, defaultdict, deque
+from pathlib import Path
 
 from .hand_detector import HandLandmarks
 from .config import GestureType, DetectionThresholds
 from .utils import Point, MotionTracker, Debouncer
+from .gesture_model import GestureModelAssist
 
 
 class GestureRecognizer:
@@ -53,8 +55,19 @@ class GestureRecognizer:
 
         self._majority_ratio = 0.55
         self._min_consecutive_frames = 2
-        self._unknown_release_frames = 4
-        self._motion_cooldown_seconds = 0.8
+        self._unknown_release_frames = 2
+        self._motion_cooldown_seconds = 0.45
+
+        # Optional model-assist classifier (hybrid mode).
+        self.model_assist = None
+        if self.thresholds.model_assist_enabled:
+            model_path = Path(__file__).resolve().parent.parent / self.thresholds.model_assist_path
+            self.model_assist = GestureModelAssist(
+                model_path=str(model_path),
+                min_samples=self.thresholds.model_assist_min_samples,
+                min_confidence=self.thresholds.model_assist_min_confidence,
+                autosave_interval=self.thresholds.model_assist_autosave_interval,
+            )
     
     def recognize(self, hand: HandLandmarks, hand_id: int = 0, 
                  current_time: Optional[float] = None) -> Tuple[GestureType, dict]:
@@ -88,6 +101,10 @@ class GestureRecognizer:
 
         hand_scale = self._hand_scale_factor(hand)
 
+        model_used = False
+        model_confidence = 0.0
+        model_gesture = GestureType.UNKNOWN
+
         if motion_gesture != GestureType.UNKNOWN:
             raw_gesture = motion_gesture
             gesture_type = "motion"
@@ -96,6 +113,18 @@ class GestureRecognizer:
             # Check for static gestures
             static_gesture, confidence = self._detect_static_gesture(hand, hand_scale)
             raw_gesture = static_gesture
+
+            # Feed strong rule labels into online model adaptation.
+            if self.model_assist is not None:
+                self.model_assist.update_from_rule(hand, raw_gesture, confidence)
+
+            # Use model assist conservatively on uncertain/ambiguous static outputs.
+            if self.model_assist is not None and self._should_try_model_assist(raw_gesture, confidence):
+                model_gesture, model_confidence = self.model_assist.predict(hand)
+                if self._should_accept_model(raw_gesture, model_gesture):
+                    raw_gesture = model_gesture
+                    confidence = max(confidence, model_confidence)
+                    model_used = True
 
         if confidence < self.thresholds.gesture_confidence_threshold:
             raw_gesture = GestureType.UNKNOWN
@@ -112,7 +141,48 @@ class GestureRecognizer:
             "raw_gesture": raw_gesture.value,
             "stable_gesture": stabilized_gesture.value,
             "hand_scale": hand_scale,
+            "model_assist_used": model_used,
+            "model_assist_gesture": model_gesture.value,
+            "model_assist_confidence": model_confidence,
+            "model_class_stats": self.model_assist.get_class_stats() if self.model_assist is not None else {},
         }
+
+    def _should_try_model_assist(self, raw_gesture: GestureType, confidence: float) -> bool:
+        if raw_gesture == GestureType.UNKNOWN:
+            return True
+
+        ambiguous = {
+            GestureType.TWO_FINGERS,
+            GestureType.THREE_FINGERS,
+            GestureType.THUMB_UP,
+            GestureType.THUMB_DOWN,
+            GestureType.THUMB_LEFT,
+            GestureType.THUMB_RIGHT,
+        }
+        return raw_gesture in ambiguous and confidence < 0.86
+
+    def _should_accept_model(self, raw_gesture: GestureType, model_gesture: GestureType) -> bool:
+        if model_gesture == GestureType.UNKNOWN:
+            return False
+
+        if raw_gesture == GestureType.UNKNOWN:
+            return True
+
+        thumb_set = {
+            GestureType.THUMB_UP,
+            GestureType.THUMB_DOWN,
+            GestureType.THUMB_LEFT,
+            GestureType.THUMB_RIGHT,
+        }
+        finger_set = {GestureType.TWO_FINGERS, GestureType.THREE_FINGERS}
+
+        if raw_gesture in thumb_set and model_gesture in thumb_set:
+            return True
+
+        if raw_gesture in finger_set and model_gesture in finger_set:
+            return True
+
+        return False
     
     def _detect_static_gesture(self, hand: HandLandmarks, hand_scale: float) -> Tuple[GestureType, float]:
         """Detect static gesture from hand configuration."""
@@ -141,12 +211,14 @@ class GestureRecognizer:
         # Detect thumb-direction gestures (thumb only, others folded).
         thumb_dir_gesture, thumb_dir_conf = self._detect_thumb_direction_gesture(hand, state)
         if thumb_dir_gesture != GestureType.UNKNOWN:
-            return thumb_dir_gesture, thumb_dir_conf
+            required_conf = 0.66 if thumb_dir_gesture in (GestureType.THUMB_LEFT, GestureType.THUMB_RIGHT) else 0.74
+            if thumb_dir_conf >= required_conf:
+                return thumb_dir_gesture, thumb_dir_conf
         
-        # Check fist (all fingers closed)
-        fist_closed = 5 - fingers_up_count
-        if fist_closed >= 4:
-            return GestureType.FIST, min(0.95, 0.65 + 0.08 * fist_closed)
+        # Check fist (all non-thumb fingers closed and thumb not extended).
+        non_thumb_closed = int(not index_up) + int(not middle_up) + int(not ring_up) + int(not pinky_up)
+        if non_thumb_closed >= 4 and not state["thumb"]:
+            return GestureType.FIST, min(0.95, 0.64 + 0.08 * non_thumb_closed)
 
         # Check pinch (thumb + index close together), but only when the hand is
         # not in an open-palm shape. This prevents open palm from being
@@ -242,26 +314,48 @@ class GestureRecognizer:
     def _detect_thumb_direction_gesture(self, hand: HandLandmarks, state: dict) -> Tuple[GestureType, float]:
         """Classify thumb-only poses into up/down/left/right directions."""
         non_thumb_all_down = not state["index"] and not state["middle"] and not state["ring"] and not state["pinky"]
-        if not (state["thumb"] and non_thumb_all_down):
+        if not non_thumb_all_down:
             return GestureType.UNKNOWN, 0.0
 
         thumb_tip = hand.landmarks[4]
         thumb_mcp = hand.landmarks[2]
+        index_mcp = hand.landmarks[5]
+        wrist = hand.landmarks[0]
+
+        x_min, y_min, x_max, y_max = hand.get_bounding_box()
+        hand_size = max(x_max - x_min, y_max - y_min, 1e-6)
+
         dx = thumb_tip.x - thumb_mcp.x
         dy = thumb_tip.y - thumb_mcp.y
 
         magnitude = (dx * dx + dy * dy) ** 0.5
-        if magnitude < 0.045:
+        if magnitude < max(0.048, hand_size * 0.18):
+            return GestureType.UNKNOWN, 0.0
+
+        # Reject compact fist-like poses where thumb is not clearly projected.
+        tip_to_wrist = thumb_tip.distance_2d(wrist)
+        mcp_to_wrist = thumb_mcp.distance_2d(wrist)
+        thumb_spread = thumb_tip.distance_2d(index_mcp)
+        if tip_to_wrist < (mcp_to_wrist + max(0.008, hand_size * 0.04)):
             return GestureType.UNKNOWN, 0.0
 
         abs_dx = abs(dx)
         abs_dy = abs(dy)
-        confidence = max(0.64, min(0.96, magnitude * 9.0))
+        confidence = max(0.62, min(0.96, magnitude * 8.0))
 
         if abs_dy > abs_dx * 1.15:
+            if abs_dy < max(0.045, hand_size * 0.18):
+                return GestureType.UNKNOWN, 0.0
+            if thumb_spread < max(0.05, hand_size * 0.20):
+                return GestureType.UNKNOWN, 0.0
             return (GestureType.THUMB_UP, confidence) if dy < 0 else (GestureType.THUMB_DOWN, confidence)
 
         if abs_dx > abs_dy * 1.15:
+            if abs_dx < max(0.032, hand_size * 0.11):
+                return GestureType.UNKNOWN, 0.0
+            if thumb_spread < max(0.032, hand_size * 0.12):
+                return GestureType.UNKNOWN, 0.0
+            confidence = max(confidence, 0.68)
             return (GestureType.THUMB_RIGHT, confidence) if dx > 0 else (GestureType.THUMB_LEFT, confidence)
 
         return GestureType.UNKNOWN, 0.0

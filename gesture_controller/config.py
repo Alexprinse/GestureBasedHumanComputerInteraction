@@ -89,7 +89,14 @@ class DetectionThresholds:
     smoothing_alpha: float = 0.45  # Exponential moving average factor
     
     # Debouncing
-    debounce_delay: float = 0.42  # Seconds before same gesture can repeat
+    debounce_delay: float = 0.22  # Seconds before same gesture can repeat
+
+    # Optional model-assisted classification
+    model_assist_enabled: bool = True
+    model_assist_min_confidence: float = 0.64
+    model_assist_min_samples: int = 8
+    model_assist_autosave_interval: int = 120
+    model_assist_path: str = "models/gesture_centroids.json"
     
     # Frame processing
     max_num_hands: int = 1

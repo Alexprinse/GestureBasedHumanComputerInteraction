@@ -42,6 +42,38 @@ The current version is optimized for practical laptop use and presentation. It u
 4. The interaction layer maps the gesture to a system action.
 5. PyAutoGUI or macOS automation executes the action.
 
+## Hybrid Recognition (Rules + Model Assist)
+
+The recognizer now supports a hybrid mode:
+
+- Rule-based logic remains the primary classifier.
+- A lightweight centroid model assists only ambiguous static gestures.
+- The model self-calibrates online from high-confidence rule detections.
+
+This keeps behavior safe and debuggable while improving recognition over time
+for your camera, lighting, and hand motion style.
+
+Model-assist target classes:
+
+- `two_fingers`
+- `three_fingers`
+- `thumb_up`
+- `thumb_down`
+- `thumb_left`
+- `thumb_right`
+
+Model file:
+
+- `models/gesture_centroids.json` (auto-created and updated during usage)
+
+Tuning knobs in `gesture_controller/config.py`:
+
+- `model_assist_enabled`
+- `model_assist_min_confidence`
+- `model_assist_min_samples`
+- `model_assist_autosave_interval`
+- `model_assist_path`
+
 ## Functional Behavior
 
 ### Cursor and Selection
@@ -200,6 +232,38 @@ python main.py --camera 0
 python main.py --screen-width 1920 --screen-height 1080
 ```
 
+## Web Dashboard
+
+You can run a local control dashboard with a built-in usage guide and runtime controls.
+
+Start server:
+
+```bash
+/Users/shalem/Desktop/majorProject/.venv/bin/python -m streamlit run dashboard.py
+```
+
+Then open:
+
+```text
+http://localhost:8501
+```
+
+Dashboard features:
+
+- Start Detection (camera loop)
+- Stop Detection
+- Toggle interaction on/off while detection keeps running
+- Live camera preview while detection is running
+- Live runtime status (gesture, action, FPS, model-assist confidence)
+- Per-gesture model sample counts and readiness
+
+Recommended flow:
+
+1. Start detection with interaction disabled.
+2. Verify gesture labels and model readiness.
+3. Enable interaction when behavior is stable.
+4. Use Stop Detection to end camera/runtime immediately.
+
 ## Recommended Workflow
 
 1. Run `python main.py --test-mode --debug` first.
@@ -218,6 +282,8 @@ Main tuning values are in `gesture_controller/config.py` and `gesture_controller
 - `cursor_lerp_alpha` controls cursor glide speed
 - `cursor_deadzone_px` reduces small cursor jumps
 - `pinch_drag_threshold` controls how much movement is needed before selection drag starts
+- `model_assist_min_confidence` controls how strict ML override acceptance is
+- `model_assist_min_samples` controls warmup before model predictions are used
 
 ## macOS Notes
 
