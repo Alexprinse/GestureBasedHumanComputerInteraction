@@ -10,6 +10,7 @@ import time
 import threading
 import importlib
 import cv2
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
@@ -27,9 +28,53 @@ from gesture_controller.config import (
     DEFAULT_SCREEN_MAPPING,
     DEFAULT_SYSTEM_CONFIG,
     DEFAULT_THRESHOLDS,
+    GESTURE_ACTIONS,
     GestureType,
 )
 from gesture_controller.interaction_logic import InteractionLogic
+
+
+ACTION_DESCRIPTIONS = {
+    "cursor_move": "Move mouse cursor with index finger.",
+    "click": "Single click when pinch is released.",
+    "drag": "Pinch and move to click-and-drag.",
+    "scroll": "Open palm vertical motion scrolls page.",
+    "toggle_playpause": "Toggle media play or pause.",
+    "switch_app": "Switch between applications.",
+    "zoom_in": "Zoom in on current app content.",
+    "zoom_out": "Zoom out on current app content.",
+    "previous_tab": "Move to previous browser or editor tab.",
+    "next_tab": "Move to next browser or editor tab.",
+    "volume_up": "Increase system output volume.",
+    "volume_down": "Decrease system output volume.",
+    "reset": "Reset or neutral action state.",
+    "fist_motion": "Lock mode trigger action family.",
+    "none": "No direct system action.",
+}
+
+
+def resolve_logo_path() -> Optional[Path]:
+    """Find logo file in assets folder using preferred names, then fallback to first image."""
+    assets_dir = Path(__file__).resolve().parent / "assets"
+    if not assets_dir.exists():
+        return None
+
+    preferred_names = [
+        "logo.png",
+        "logo.jpg",
+        "logo.jpeg",
+        "logo.webp",
+    ]
+    for name in preferred_names:
+        candidate = assets_dir / name
+        if candidate.exists():
+            return candidate
+
+    image_candidates = []
+    for pattern in ("*.png", "*.jpg", "*.jpeg", "*.webp"):
+        image_candidates.extend(sorted(assets_dir.glob(pattern)))
+
+    return image_candidates[0] if image_candidates else None
 
 
 @dataclass
@@ -244,49 +289,170 @@ def render_header():
     st.markdown(
         """
         <style>
-            .block-container {padding-top: 1.2rem;}
-            .guide-box {padding: 12px 14px; border: 1px solid rgba(40,60,70,.2); border-radius: 12px; background: rgba(248,252,255,.8);}
-            .tiny {font-size: .85rem; color: #4f6470;}
+            .stApp {
+                background: #ffffff !important;
+                color: #111111 !important;
+            }
+            [data-testid="stAppViewContainer"],
+            [data-testid="stHeader"],
+            [data-testid="stToolbar"],
+            [data-testid="stSidebar"] {
+                background: #ffffff !important;
+            }
+            [data-testid="stMarkdownContainer"],
+            [data-testid="stMetricValue"],
+            [data-testid="stMetricLabel"],
+            .stCaption,
+            .stText,
+            p, span, label, h1, h2, h3, h4 {
+                color: #111111 !important;
+            }
+            .block-container {padding-top: 1.0rem; max-width: 1300px;}
+            .guide-box {
+                padding: 12px 14px;
+                border: 1px solid #d8dde3;
+                border-radius: 12px;
+                background: #ffffff;
+                color: #111111;
+            }
+            .hero {
+                border: 1px solid #e3e8ee;
+                background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+                border-radius: 16px;
+                padding: 16px 18px;
+                box-shadow: 0 10px 26px rgba(16, 24, 40, 0.06);
+                margin-bottom: 10px;
+            }
+            .hero-logo-wrap {
+                margin-top: 18px;
+                padding-left: 8px;
+                padding-right: 8px;
+            }
+            .hero-title {
+                margin: 0;
+                font-size: 1.45rem;
+                font-weight: 700;
+                letter-spacing: -0.01em;
+                color: #0e2233;
+            }
+            .hero-sub {
+                margin: 6px 0 0 0;
+                color: #385063;
+                font-size: 0.95rem;
+            }
+            .status-grid {
+                display: grid;
+                grid-template-columns: repeat(4, minmax(0, 1fr));
+                gap: 10px;
+                margin: 8px 0 4px 0;
+            }
+            .status-card {
+                border: 1px solid #e5eaf0;
+                border-radius: 12px;
+                padding: 10px 12px;
+                background: #ffffff;
+                box-shadow: 0 4px 14px rgba(16, 24, 40, 0.05);
+            }
+            .status-label {
+                font-size: 0.72rem;
+                color: #5a7186;
+                text-transform: uppercase;
+                letter-spacing: 0.04em;
+                margin-bottom: 4px;
+            }
+            .status-value {
+                font-size: 1.02rem;
+                font-weight: 700;
+                color: #132a3a;
+                line-height: 1.15;
+            }
+            .status-running { color: #0e9f6e; }
+            .status-idle { color: #c07000; }
+            .tiny-muted {
+                font-size: .82rem;
+                color: #4f6470 !important;
+            }
+            .stButton > button {
+                border-radius: 10px !important;
+                border: 1px solid #cfd9e3 !important;
+                padding-top: 0.48rem !important;
+                padding-bottom: 0.48rem !important;
+            }
+            .stButton > button[kind="primary"] {
+                background: #1763d1 !important;
+                color: #ffffff !important;
+                border-color: #1763d1 !important;
+            }
+            .stButton > button:hover {
+                border-color: #8ea8c0 !important;
+            }
+            [data-baseweb="tab-list"] button {
+                border-radius: 10px 10px 0 0 !important;
+                font-weight: 600 !important;
+            }
+            [data-baseweb="tab-panel"] {
+                padding-top: 10px;
+            }
+            [data-testid="stDataFrame"] {
+                border: 1px solid #e2e8f0;
+                border-radius: 12px;
+                overflow: hidden;
+            }
+            .tiny {font-size: .85rem; color: #2f4652 !important;}
+            @media (max-width: 960px) {
+                .status-grid {
+                    grid-template-columns: repeat(2, minmax(0, 1fr));
+                }
+            }
         </style>
         """,
         unsafe_allow_html=True,
     )
-    st.title("Gesture Control Dashboard")
-    st.caption("Guide + runtime control panel for starting/stopping detection and interaction safely.")
+    logo_path = resolve_logo_path()
+
+    hero_left, hero_right = st.columns([0.2, 0.8], gap="medium")
+    with hero_left:
+        st.markdown("<div class='hero-logo-wrap'>", unsafe_allow_html=True)
+        if logo_path is not None:
+            st.image(str(logo_path), width=260)
+        else:
+            st.markdown("<div class='hero' style='text-align:center;font-size:2rem;'>AI</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with hero_right:
+        st.markdown(
+            """
+            <div class="hero">
+                <h1 class="hero-title">Intelligent Gesture Based Human Computer Interaction System</h1>
+                <p class="hero-sub">Production-style control center for detection, interaction, camera preview, and model readiness diagnostics.</p>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def render_controls(runtime: DetectionRuntime):
-    left, right = st.columns([1.2, 1.0], gap="large")
+    st.subheader("Runtime Control")
+    camera_id = st.number_input("Camera ID", min_value=0, value=0, step=1)
+    interaction_enabled = st.toggle("Interaction Enabled", value=True)
 
-    with left:
-        st.subheader("Runtime Control")
-        camera_id = st.number_input("Camera ID", min_value=0, value=0, step=1)
-        interaction_enabled = st.toggle("Interaction Enabled", value=True)
+    c1, c2, c3 = st.columns(3)
+    with c1:
+        if st.button("Start Detection", use_container_width=True, type="primary"):
+            result = runtime.start(camera_id=int(camera_id), interaction_enabled=interaction_enabled)
+            (st.success if result["ok"] else st.error)(result["message"])
 
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            if st.button("Start Detection", use_container_width=True, type="primary"):
-                result = runtime.start(camera_id=int(camera_id), interaction_enabled=interaction_enabled)
-                (st.success if result["ok"] else st.error)(result["message"])
+    with c2:
+        if st.button("Stop Detection", use_container_width=True):
+            result = runtime.stop()
+            (st.success if result["ok"] else st.warning)(result["message"])
 
-        with c2:
-            if st.button("Stop Detection", use_container_width=True):
-                result = runtime.stop()
-                (st.success if result["ok"] else st.warning)(result["message"])
+    with c3:
+        if st.button("Apply Interaction", use_container_width=True):
+            result = runtime.set_interaction_enabled(interaction_enabled)
+            (st.success if result["ok"] else st.error)(result["message"])
 
-        with c3:
-            if st.button("Apply Interaction", use_container_width=True):
-                result = runtime.set_interaction_enabled(interaction_enabled)
-                (st.success if result["ok"] else st.error)(result["message"])
-
-        st.markdown('<div class="tiny">Refresh the page or click Rerun to update status instantly.</div>', unsafe_allow_html=True)
-
-    with right:
-        st.subheader("Quick Guide")
-        st.markdown('<div class="guide-box"><strong>1. Start safe:</strong> start with interaction disabled and verify gestures.</div>', unsafe_allow_html=True)
-        st.markdown('<div class="guide-box"><strong>2. Enable interaction:</strong> switch on once labels are stable.</div>', unsafe_allow_html=True)
-        st.markdown('<div class="guide-box"><strong>3. Emergency stop:</strong> use Stop Detection immediately when needed.</div>', unsafe_allow_html=True)
-        st.markdown('<div class="guide-box"><strong>4. Stability tips:</strong> even lighting, plain background, steady hand depth.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="tiny-muted">Refresh is automatic while running. You can still click Rerun any time.</div>', unsafe_allow_html=True)
 
 
 def render_camera_preview(runtime: DetectionRuntime):
@@ -305,21 +471,32 @@ def render_camera_preview(runtime: DetectionRuntime):
     st.caption("Live preview updates while detection is running.")
 
 
-def render_status(runtime: DetectionRuntime):
-    status = runtime.status()
-
+def render_status_cards(status: Dict[str, Any]):
     st.subheader("Live Status")
-    m1, m2, m3, m4 = st.columns(4)
-    m1.metric("Runtime", "running" if status["running"] else "idle")
-    m2.metric("FPS", f"{status['fps']:.2f}")
-    m3.metric("Frames", f"{status['frames_processed']}")
-    m4.metric("Uptime", f"{status['uptime_seconds']:.1f}s")
+    runtime_text = "running" if status["running"] else "idle"
+    runtime_class = "status-running" if status["running"] else "status-idle"
+    interaction_text = "enabled" if status["interaction_enabled"] else "disabled"
+    hand_text = "detected" if status["hand_detected"] else "none"
 
-    a1, a2, a3, a4 = st.columns(4)
-    a1.metric("Interaction", "enabled" if status["interaction_enabled"] else "disabled")
-    a2.metric("Gesture", status["current_gesture"])
-    a3.metric("Action", status["current_action"])
-    a4.metric("Hand", "detected" if status["hand_detected"] else "none")
+    st.markdown(
+        f"""
+        <div class="status-grid">
+            <div class="status-card"><div class="status-label">Runtime</div><div class="status-value {runtime_class}">{runtime_text}</div></div>
+            <div class="status-card"><div class="status-label">FPS</div><div class="status-value">{status['fps']:.2f}</div></div>
+            <div class="status-card"><div class="status-label">Frames</div><div class="status-value">{status['frames_processed']}</div></div>
+            <div class="status-card"><div class="status-label">Uptime</div><div class="status-value">{status['uptime_seconds']:.1f}s</div></div>
+            <div class="status-card"><div class="status-label">Interaction</div><div class="status-value">{interaction_text}</div></div>
+            <div class="status-card"><div class="status-label">Gesture</div><div class="status-value">{status['current_gesture']}</div></div>
+            <div class="status-card"><div class="status-label">Action</div><div class="status-value">{status['current_action']}</div></div>
+            <div class="status-card"><div class="status-label">Hand</div><div class="status-value">{hand_text}</div></div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def render_status_details(status: Dict[str, Any]):
+    st.subheader("Model and Training Details")
 
     b1, b2 = st.columns(2)
     with b1:
@@ -347,15 +524,57 @@ def render_status(runtime: DetectionRuntime):
         st.error(status["last_error"])
 
 
+def render_quick_guide():
+    st.subheader("Quick Guide")
+    st.markdown('<div class="guide-box"><strong>1. Start safe:</strong> start with interaction disabled and verify gestures.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="guide-box"><strong>2. Enable interaction:</strong> switch on once labels are stable.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="guide-box"><strong>3. Emergency stop:</strong> use Stop Detection immediately when needed.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="guide-box"><strong>4. Stability tips:</strong> even lighting, plain background, steady hand depth.</div>', unsafe_allow_html=True)
+
+
+def render_gesture_reference():
+    st.subheader("Gesture and Action Reference")
+    st.caption("Complete mapping of supported gestures to app actions.")
+
+    rows = []
+    for gesture in sorted(GESTURE_ACTIONS.keys(), key=lambda g: g.value):
+        action = GESTURE_ACTIONS[gesture]
+        rows.append(
+            {
+                "Gesture": gesture.value,
+                "Action": action,
+                "Effect": ACTION_DESCRIPTIONS.get(action, "Action behavior is defined in interaction logic."),
+            }
+        )
+
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+
+    st.markdown("### Practical Control Actions")
+    st.write("You can perform cursor movement, click, drag, scroll, tab switching, app switching, volume control, zoom, and media play or pause.")
+
+
 def main():
     render_header()
     runtime = get_runtime()
     st_autorefresh(interval=300, key="dashboard_refresh")
-    render_controls(runtime)
-    st.divider()
-    render_camera_preview(runtime)
-    st.divider()
-    render_status(runtime)
+    tab_dashboard, tab_reference = st.tabs(["Control Center", "Gestures and Actions"])
+
+    with tab_dashboard:
+        status = runtime.status()
+        render_status_cards(status)
+        st.divider()
+        left, right = st.columns([1.0, 1.2], gap="large")
+        with left:
+            render_controls(runtime)
+        with right:
+            render_camera_preview(runtime)
+        st.divider()
+        render_status_details(status)
+
+    with tab_reference:
+        render_quick_guide()
+        st.divider()
+        render_gesture_reference()
 
 
 if __name__ == "__main__":

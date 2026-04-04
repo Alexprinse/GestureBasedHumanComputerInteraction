@@ -257,6 +257,10 @@ Dashboard features:
 - Live runtime status (gesture, action, FPS, model-assist confidence)
 - Per-gesture model sample counts and readiness
 
+Branding:
+
+- Place your logo at `assets/logo.png` to show it in the dashboard header.
+
 Recommended flow:
 
 1. Start detection with interaction disabled.
